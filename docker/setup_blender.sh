@@ -27,46 +27,52 @@ export PATH="$INSTALL_DIR:$PATH"
 echo "Blender Version: $(blender --version | head -1)"
 
 # --- 2. Install Desktop (GUI/VNC) ---
-if ! command -v vncserver &> /dev/null; then
-    echo "Installing XFCE4 & TigerVNC (This takes 2-3 mins)..."
-    apt-get update > /dev/null
+GUI_CHOICE="${1:-xfce}" # Default to xfce if not provided
+
+echo "Configuring Desktop Environment: $GUI_CHOICE"
+apt-get update > /dev/null
+
+if [ "$GUI_CHOICE" == "kde" ]; then
+    echo "Ensuring KDE Plasma packages..."
+    # Force non-interactive to prevent timezone prompts etc
+    DEBIAN_FRONTEND=noninteractive apt-get install -y kde-plasma-desktop tigervnc-standalone-server tigervnc-common dbus-x11 > /dev/null
+    START_CMD="startplasma-x11"
+else
+    echo "Ensuring XFCE4 packages..."
     DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common dbus-x11 > /dev/null
-    
-    # Clean up
-    rm -rf /var/lib/apt/lists/*
-    
-    # Setup VNC Password
-    mkdir -p ~/.vnc
-    echo "$VNC_PASS" | vncpasswd -f > ~/.vnc/passwd
-    chmod 600 ~/.vnc/passwd
-    
-    # Create Startup Script
-    cat <<EOF > ~/.vnc/xstartup
+    START_CMD="startxfce4"
+fi
+
+# Clean up
+rm -rf /var/lib/apt/lists/*
+
+# Setup VNC Password (idempotent)
+mkdir -p ~/.vnc
+echo "$VNC_PASS" | vncpasswd -f > ~/.vnc/passwd
+chmod 600 ~/.vnc/passwd
+
+# FORCE Update Startup Script (Critical for switching)
+echo "Updating VNC startup script for $GUI_CHOICE..."
+cat <<EOF > ~/.vnc/xstartup
 #!/bin/sh
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
-exec startxfce4
+exec $START_CMD
 EOF
-    chmod +x ~/.vnc/xstartup
-    
-    echo "Desktop Environment Installed."
-else
-    echo "VNC Server already installed."
-fi
+chmod +x ~/.vnc/xstartup
 
-# --- 3. Start VNC (if requested via env or just always check) ---
-# We check if vncserver is running on :1
-if ! pgrep -x "Xtigervnc" > /dev/null; then
-    echo "Starting VNC Server on :1 (Port 5901)..."
-    # Kill any stale locks
-    rm -f /tmp/.X1-lock
-    rm -f /tmp/.X11-unix/X1
-    
-    vncserver :1 -geometry 1920x1080 -depth 24
-    echo "VNC Started."
-else
-    echo "VNC is running."
-fi
+echo "Desktop Environment configured."
+
+
+# --- 3. Start VNC (Force Restart) ---
+echo "Restarting VNC Server..."
+# Kill if running to apply new xstartup
+vncserver -kill :1 &> /dev/null || true
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+
+# Start fresh
+vncserver :1 -geometry 1920x1080 -depth 24
+echo "VNC Started on :1 (Port 5901)"
 
 echo "========================================"
 echo "Ready. "

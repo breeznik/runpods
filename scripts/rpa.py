@@ -106,7 +106,13 @@ def wait_for_pod(pod_id, timeout=300):
     print(f"Waiting for pod {pod_id}...")
     start = time.time()
     while time.time() - start < timeout:
-        pod = runpod.get_pod(pod_id)
+        try:
+            pod = runpod.get_pod(pod_id)
+        except Exception as e:
+            print(f"  Warning: API error ({e}), retrying...")
+            time.sleep(2)
+            continue
+            
         if pod.get("desiredStatus") == "RUNNING":
              # Check for SSH
             runtime = pod.get("runtime") or {}
@@ -254,6 +260,12 @@ def get_running_pod_info(args):
             
     return {"id": pod_id, "ip": ssh_ip, "port": ssh_port, "name": pod.get("name"), "cost": pod.get("costPerHr")}
 
+def get_ssh_base_cmd(info):
+    """Generates the base SSH command string with keys and flags."""
+    key_path = os.path.expanduser(SSH_KEY_PATH)
+    # Quote key path for Windows safety
+    return f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]}'
+
 def cmd_connect(args):
     import webbrowser
     info = get_running_pod_info(args)
@@ -265,17 +277,27 @@ def cmd_connect(args):
     key_path = os.path.expanduser(SSH_KEY_PATH)
     
     # Start SSH Tunnel in background
-    print("   Opening Tunnel (localhost:8888 -> pod:8888)...")
-    # Windows: start /B for background
-    tunnel_cmd = f'start /B ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no -N -L 8888:localhost:8888 root@{info["ip"]}'
-    os.system(tunnel_cmd)
+    print("   Opening Tunnel (127.0.0.1:8888 -> pod:8888)...")
+    # Windows: Open new window so user can see errors/close it
+    ssh_base = get_ssh_base_cmd(info)
+    # We need to construct the full command for 'start'
+    # ssh -N -L ...
+    tunnel_args = f'-N -L 8888:127.0.0.1:8888'
+    # Combine: start "Title" ssh ...
+    # Standardize ssh_base usage: remove "ssh" prefix if using 'start' directly?
+    # get_ssh_base_cmd returns "ssh -p ...". 
+    # 'start' command expects executable as first arg after title.
+    # We'll just run output of get_ssh_base_cmd inside the string
+    
+    full_cmd = f'{ssh_base} {tunnel_args}'
+    os.system(f'start "RunPod Tunnel (8888)" {full_cmd}')
     
     print("   Waiting for handshake...")
     time.sleep(3)
     
     print("🚀 Launching Browser...")
-    webbrowser.open("http://localhost:8888")
-    print("Done. (Tunnel runs in background. Close terminal to kill it).")
+    webbrowser.open("http://127.0.0.1:8888")
+    print("Done. (Tunnel runs in output window. Close it to disconnect).")
 
 def cmd_watch(args):
     info = get_running_pod_info(args)
@@ -287,7 +309,8 @@ def cmd_watch(args):
     key_path = os.path.expanduser(SSH_KEY_PATH)
     
     # Tail the startup log
-    cmd = f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]} "tail -f /workspace/startup.log"'
+    ssh_base = get_ssh_base_cmd(info)
+    cmd = f'{ssh_base} "tail -f /workspace/startup.log"'
     os.system(cmd)
 
 def cmd_pull(args):
@@ -302,11 +325,20 @@ def cmd_pull(args):
     print(f"📥 Pulling media from {info['name']}...")
     key_path = os.path.expanduser(SSH_KEY_PATH)
     
-    # SCP recursive from ComfyUI output
-    # Wildcard match for images/videos
-    # Actually, simpler to just sync the whole output folder
-    remote_path = "/workspace/ComfyUI/output/*"
+    # Official ComfyUI output path
+    remote_base = "/workspace/ComfyUI/output"
     
+    # Check if remote folder has files
+    ssh_base = get_ssh_base_cmd(info)
+    check_cmd = f'{ssh_base} "ls -A {remote_base} 2>/dev/null"'
+    files = os.popen(check_cmd).read().strip()
+    
+    if not files:
+        print("⚠️  No files found in remote output.")
+        return
+
+    # SCP recursive
+    remote_path = f"{remote_base}/*"
     cmd = f'scp -P {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no -r root@{info["ip"]}:{remote_path} "{local_out}"'
     os.system(cmd)
     
@@ -326,8 +358,10 @@ def cmd_push(args):
     key_path = os.path.expanduser(SSH_KEY_PATH)
     
     # Official ComfyUI workflow standard location (for Sidebar access)
+    # Official ComfyUI workflow standard location (for Sidebar access)
     remote_dir = "/workspace/ComfyUI/user/default/workflows"
-    mkdir_cmd = f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]} "mkdir -p {remote_dir}"'
+    ssh_base = get_ssh_base_cmd(info)
+    mkdir_cmd = f'{ssh_base} "mkdir -p {remote_dir}"'
     subprocess.run(mkdir_cmd, shell=True, check=True)
 
     for f in args.files:
@@ -361,15 +395,37 @@ def ensure_blender(info):
     result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True).stdout.strip()
     
     if result != "YES":
-        print("🛠️ Blender not found. Installing (this takes ~3 mins)...")
+        print("🛠️ Blender/VNC not found. Installing...")
+        print("   Select Desktop Environment:")
+        print("   [1] XFCE (Fast, Lightweight, Retro) - Recommended for VNC")
+        print("   [2] KDE Plasma (Modern, Windows-like, Heavier)")
+        
+        gui_choice = "xfce" # default
+        choice = input("   Choice [1]: ").strip()
+        if choice == "2":
+            gui_choice = "kde"
+            
+        print(f"   Installing {gui_choice.upper()}... (This takes 3-5 mins)")
+
         # Upload setup script
         setup_script = Path(__file__).parent.parent / "docker" / "setup_blender.sh"
         scp_cmd = f'scp -P {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no "{setup_script}" root@{info["ip"]}:/workspace/'
         subprocess.run(scp_cmd, shell=True, check=True)
         
-        # Run it
-        run_cmd = f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]} "chmod +x /workspace/setup_blender.sh && /workspace/setup_blender.sh"'
+        # Run it with argument
+        ssh_base = get_ssh_base_cmd(info)
+        run_cmd = f'{ssh_base} "chmod +x /workspace/setup_blender.sh && /workspace/setup_blender.sh {gui_choice}"'
         subprocess.run(run_cmd, shell=True, check=True)
+        
+        # Create Desktop Shortcut
+        print("   Creating Desktop Shortcut...")
+        shortcut_cmd = (
+            f'{ssh_base} "mkdir -p /root/Desktop && '
+            f'printf \\"[Desktop Entry]\\nVersion=1.0\\nName=Blender 4.3\\nComment=Launch Blender\\nExec=/workspace/blender/blender\\nIcon=utilities-terminal\\nTerminal=false\\nType=Application\\nCategories=Graphics;\\" > /root/Desktop/Blender.desktop && '
+            f'chmod +x /root/Desktop/Blender.desktop"'
+        )
+        subprocess.run(shortcut_cmd, shell=True)
+        
         print("✅ Blender Installed.")
     else:
         print("✅ Blender is ready.")
@@ -400,7 +456,9 @@ def cmd_render(args):
     render_cmd = f'/workspace/blender/blender -b "{remote_blend}" -a'
     
     # We run this synchronously so we see the output
-    ssh_cmd = f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]} "{render_cmd}"'
+    # We run this synchronously so we see the output
+    ssh_base = get_ssh_base_cmd(info)
+    ssh_cmd = f'{ssh_base} "{render_cmd}"'
     os.system(ssh_cmd)
     
     print("\n✅ Render Complete.")
@@ -419,17 +477,49 @@ def cmd_vnc(args):
     key_path = os.path.expanduser(SSH_KEY_PATH)
     
     # Start Tunnel for VNC (5901 -> 5901)
-    print("   Opening Tunnel (localhost:5901 -> pod:5901)...")
-    tunnel_cmd = f'start /B ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no -N -L 5901:localhost:5901 root@{info["ip"]}'
-    os.system(tunnel_cmd)
+    # Start Tunnel for VNC (5901 -> 5901)
+    print("   Opening Tunnel (127.0.0.1:5901 -> pod:5901)...")
+    
+    ssh_base = get_ssh_base_cmd(info) 
+    tunnel_args = f'-N -L 5901:127.0.0.1:5901'
+    full_cmd = f'{ssh_base} {tunnel_args}'
+    
+    os.system(f'start "RunPod VNC Tunnel (5901)" {full_cmd}')
     
     print("   Waiting for handshake...")
     time.sleep(3)
     
-    print("\n✅ Tunnel Active.")
-    print("   Open your VNC Viewer (RealVNC/TigerVNC) and connect to: localhost:5901")
+    print("\n✅ Tunnel Launched.")
+    print("   Open your VNC Viewer (RealVNC/TigerVNC) and connect to: 127.0.0.1:5901")
     print("   Password: runpod")
-    print("   (Tunnel runs in background. Close terminal to kill it).")
+    print("   (Tunnel runs in popup window. Close it to kill the connection).")
+
+def cmd_reinstall_gui(args):
+    """Force re-installation of Blender and Desktop GUI."""
+    info = get_running_pod_info(args)
+    if not info:
+        print("No running pods found.")
+        return
+
+    print(f"🧹 Clearing existing Blender/GUI markers on {info['name']}...")
+    ssh_base = get_ssh_base_cmd(info)
+    
+    # Remove the marker file so ensure_blender triggers again
+    # We DO NOT delete the whole folder to preserve huge downloads if possible, 
+    # but the script might overwrite.
+    # Actually, a clean reinstall usually implies cleaning /workspace/blender
+    
+    confirm = input("Are you sure? This will re-trigger the installation wizard. (Y/n): ").strip().lower()
+    if confirm != 'y':
+        print("Cancelled.")
+        return
+
+    # Remove marker
+    os.system(f'{ssh_base} "rm -f /workspace/blender/blender"')
+    
+    print("✅ Markers cleared.")
+    print("🚀 Triggering new installation...")
+    ensure_blender(info)
 
 def cmd_shell(args):
     info = get_running_pod_info(args)
@@ -441,8 +531,8 @@ def cmd_shell(args):
     key_path = os.path.expanduser(SSH_KEY_PATH)
     
     # Launch direct SSH session
-    ssh_cmd = f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]}'
-    os.system(ssh_cmd)
+    ssh_base = get_ssh_base_cmd(info)
+    os.system(ssh_base)
 
 def guess_category(url):
     """Attempt to auto-detect the destination folder from the URL path"""
@@ -512,8 +602,11 @@ def cmd_ingest(args):
             
             # Use --show-progress and bar:force:noscroll. Avoid -q to ensure we see the progress bar.
             # We wrap the command in quotes for SSH.
-            remote_cmd = f"mkdir -p {dest_path} && cd {dest_path} && wget -c --show-progress --progress=bar:force:noscroll --content-disposition '{url}'"
-            ssh_cmd = f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]} "{remote_cmd}"'
+            # Safe quoting for URL
+            safe_url = url.replace("'", "'\\''")
+            remote_cmd = f"mkdir -p {dest_path} && cd {dest_path} && wget -c --show-progress --progress=bar:force:noscroll --content-disposition '{safe_url}'"
+            ssh_base = get_ssh_base_cmd(info)
+            ssh_cmd = f'{ssh_base} "{remote_cmd}"'
             os.system(ssh_cmd)
             
     # Phase 3: Deferred Review
@@ -537,8 +630,10 @@ def cmd_ingest(args):
             dest_path = f"/workspace/ComfyUI/models/{folder_name}"
             
             print(f"   [USER] Downloading to {folder_name}...")
-            remote_cmd = f"mkdir -p {dest_path} && cd {dest_path} && wget -c --show-progress --progress=bar:force:noscroll --content-disposition '{url}'"
-            ssh_cmd = f'ssh -p {info["port"]} -i "{key_path}" -o StrictHostKeyChecking=no root@{info["ip"]} "{remote_cmd}"'
+            safe_url = url.replace("'", "'\\''")
+            remote_cmd = f"mkdir -p {dest_path} && cd {dest_path} && wget -c --show-progress --progress=bar:force:noscroll --content-disposition '{safe_url}'"
+            ssh_base = get_ssh_base_cmd(info)
+            ssh_cmd = f'{ssh_base} "{remote_cmd}"'
             os.system(ssh_cmd)
             
     print("\n✅ All ingest tasks finished.")
@@ -571,6 +666,7 @@ def cmd_interactive(args):
         mgmt_opts = [
             ("Connect (Tunnel)", "connect"),
             ("Watch Logs", "watch"),
+            ("Check Status", "status"),
             ("Pull Content", "pull"),
             ("Wallet Check", "wallet"),
             ("Open Shell (Terminal)", "shell"),
@@ -588,6 +684,7 @@ def cmd_interactive(args):
         print("   --- 🎨 BLENDER ---")
         print(f"   [B] Render File")
         print(f"   [V] VNC Desktop")
+        print(f"   [R] Reinstall Blender & GUI (Fresh Setup)")
         print("")
 
         # 4. Admin Section
@@ -620,6 +717,7 @@ def cmd_interactive(args):
                 
                 if cmd_name == "connect": cmd_connect(args)
                 elif cmd_name == "watch": cmd_watch(args)
+                elif cmd_name == "status": cmd_status(args)
                 elif cmd_name == "pull": cmd_pull(args)
                 elif cmd_name == "wallet": cmd_wallet(args)
                 elif cmd_name == "shell": cmd_shell(args)
@@ -640,6 +738,10 @@ def cmd_interactive(args):
             
         elif choice == "V":
             cmd_vnc(args)
+            input("\nPress Enter to continue...")
+
+        elif choice == "R":
+            cmd_reinstall_gui(args)
             input("\nPress Enter to continue...")
             
         elif choice == "L":
@@ -732,6 +834,7 @@ def main():
     # New Commands
     subparsers.add_parser("connect")
     subparsers.add_parser("watch")
+    subparsers.add_parser("status")
     subparsers.add_parser("pull")
     subparsers.add_parser("wallet")
     subparsers.add_parser("shell")
@@ -748,6 +851,8 @@ def main():
     
     p_push = subparsers.add_parser("push")
     p_push.add_argument("files", nargs="+", help="Workflow JSON files to upload")
+
+    subparsers.add_parser("reinstall")
     
     args = parser.parse_args()
     
@@ -764,6 +869,8 @@ def main():
         cmd_connect(args)
     elif args.command == "watch":
         cmd_watch(args)
+    elif args.command == "status":
+        cmd_status(args)
     elif args.command == "pull":
         cmd_pull(args)
     elif args.command == "push":
@@ -778,6 +885,8 @@ def main():
         cmd_render(args)
     elif args.command == "vnc":
         cmd_vnc(args)
+    elif args.command == "reinstall":
+        cmd_reinstall_gui(args)
     elif args.command == "interactive":
         cmd_interactive(args)
     else:

@@ -9,10 +9,15 @@ echo "========================================"
 COMFYUI_PATH="${COMFYUI_PATH:-/workspace/ComfyUI}"
 COMFYUI_PORT="${COMFYUI_PORT:-8888}"
 
+# Redirect stdout/stderr to a log file for 'rpa watch'
+exec > >(tee -a /workspace/startup.log) 2>&1
+
 # Load .env variables if present
 if [ -f "/workspace/.env" ]; then
     echo "Loading .env variables..."
-    export $(grep -v '^#' /workspace/.env | xargs)
+    set -a
+    source /workspace/.env
+    set +a
 fi
 
 # 1. Install ComfyUI
