@@ -1,0 +1,84 @@
+# RunPod Automation Configuration
+# Edit this file to customize templates and settings
+
+default_image: "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+
+model_folders:
+  - checkpoints
+  - unet
+  - diffusion_models
+  - clip
+  - text_encoders
+  - vae
+  - loras
+  - clip_vision
+  - latent_upscale_models
+  - controlnet
+  - upscale_models
+
+templates:
+  # === ComfyUI / LTX-2 ===
+  prod:
+    name: ltx2-comfyui-prod
+    gpu_type_id: "NVIDIA RTX A6000"
+    cloud_type: SECURE
+    min_vram: 48
+    script: start.sh
+    desc: "RTX A6000 (48GB) - High Performance"
+
+  value:
+    name: ltx2-comfyui-value
+    gpu_type_id: "NVIDIA A40"
+    cloud_type: COMMUNITY
+    min_vram: 48
+    script: start.sh
+    desc: "NVIDIA A40 (48GB) - Best Value"
+
+  budget:
+    name: hunyuan-comfyui-budget
+    gpu_type_id: "NVIDIA RTX A5000"
+    cloud_type: SECURE
+    min_vram: 24
+    script: start_budget.sh
+    setup_script: setup_hunyuan.py
+    desc: "RTX A5000 (24GB) - Quantized Hunyuan"
+
+  # === Wan2GP Video Generation ===
+  wan2gp:
+    name: wan2gp-video-gen
+    gpu_type_id: "NVIDIA A40"
+    cloud_type: COMMUNITY
+    min_vram: 48
+    script: start_wan2gp.sh
+    desc: "NVIDIA A40 (48GB) - Wan2GP Standard"
+
+  wan2gp-prod:
+    name: wan2gp-video-prod
+    gpu_type_id: "NVIDIA RTX A6000"
+    cloud_type: SECURE
+    min_vram: 48
+    script: start_wan2gp.sh
+    desc: "RTX A6000 (48GB) - Wan2GP Ultra"
+
+  wan2gp-5090:
+    name: wan2gp-video-extreme
+    gpu_type_id: "NVIDIA GeForce RTX 5090"
+    cloud_type: COMMUNITY
+    image_name: "runpod/pytorch:2.6.0-py3.11-cuda12.6.1-devel-ubuntu22.04"
+    min_vram: 32
+    system_ram: 64
+    container_disk: 100
+    volume_disk: 200
+    script: start_wan2gp.sh
+    desc: "RTX 5090 (32GB) - Blackwell Extreme"
+
+  wan2gp-4090:
+    name: wan2gp-video-4090
+    gpu_type_id: "NVIDIA GeForce RTX 4090"
+    cloud_type: COMMUNITY
+    min_vram: 24
+    system_ram: 80
+    container_disk: 80
+    volume_disk: 200
+    script: start_wan2gp.sh
+    desc: "RTX 4090 (24GB) - Wan2GP Premium"

@@ -92,8 +92,7 @@ MODELS = {
         "gated": False,
     },
     "controlnets": {
-        "repo": "xinsir/controlnet-union-sdxl-1.0", # Placeholder for Flux Controlnet if available, or SDXL.
-        # Flux ControlNets are specific. Let's use X-Labs or similar.
+        # FIX: Removed duplicate repo key, keeping XLabs Flux controlnets
         "repo": "XLabs-AI/flux-controlnet-collections",
         "files": ["flux-canny-controlnet-v3.safetensors", "flux-depth-controlnet-v3.safetensors"],
         "dest": f"{COMFYUI_BASE}/models/controlnet",
