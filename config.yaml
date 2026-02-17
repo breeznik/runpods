@@ -43,6 +43,17 @@ templates:
     setup_script: setup_hunyuan.py
     desc: "RTX A5000 (24GB) - Quantized Hunyuan"
 
+  # === Blender Rendering Workstation ===
+  blender:
+    name: blender-workstation
+    gpu_type_id: "NVIDIA RTX A6000"
+    cloud_type: SECURE
+    min_vram: 48
+    system_ram: 70
+    script: start_blender.sh
+    ports: "3000/http,5901/http,22/tcp"
+    desc: "RTX A6000 (48GB) - Blender Workstation"
+
   # === Wan2GP Video Generation ===
   wan2gp:
     name: wan2gp-video-gen

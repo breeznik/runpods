@@ -39,6 +39,7 @@ class Template:
     volume_disk: int = 150
     image_name: Optional[str] = None
     setup_script: Optional[str] = None
+    ports: str = "8888/http,8188/http,3000/http,22/tcp"
     
     def to_pod_config(self, default_image: str, hf_token: str = "") -> Dict[str, Any]:
         """Generate RunPod API config from template."""
@@ -50,7 +51,7 @@ class Template:
             "min_memory_in_gb": self.system_ram,
             "volume_in_gb": self.volume_disk,
             "container_disk_in_gb": self.container_disk,
-            "ports": "8888/http,8188/http,3000/http,22/tcp",
+            "ports": self.ports,
             "volume_mount_path": "/workspace",
             "env": {
                 "HF_TOKEN": hf_token,
@@ -81,7 +82,7 @@ class Config:
         
         # Default config path
         if config_path is None:
-            config_path = Path(__file__).parent.parent / "config.yaml"
+            config_path = Path(__file__).parent.parent.parent / "config.yaml"
         
         if config_path.exists():
             with open(config_path) as f:
@@ -111,6 +112,7 @@ class Config:
                     volume_disk=t.get("volume_disk", 150),
                     image_name=t.get("image_name"),
                     setup_script=t.get("setup_script"),
+                    ports=t.get("ports", "8888/http,8188/http,3000/http,22/tcp"),
                 )
         else:
             # Fallback to defaults if no config file
