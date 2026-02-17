@@ -10,6 +10,9 @@ echo "========================================"
 # Redirect all output to startup.log for visibility
 exec > >(tee -a /workspace/startup.log) 2>&1
 
+# Optimize PyTorch Memory (prevent OOM on 24GB cards)
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
 # 0. Cleanup any existing Wan2GP processes
 echo "Cleaning up existing processes..."
 pkill -f "wgp.py" || true
@@ -98,6 +101,7 @@ fi
 # 9. Create keep-alive script
 cat > /workspace/keep_wan2gp_alive.sh << 'EOF'
 #!/bin/bash
+export PYTORCH_ALLOC_CONF=expandable_segments:True
 VENV_PYTHON="/workspace/venv_wan2gp/bin/python"
 WAN2GP_DIR="/workspace/Wan2GP"
 LOG_FILE="/workspace/wan2gp_service.log"
